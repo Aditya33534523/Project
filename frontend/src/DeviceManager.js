@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import API from "./api";
 import { useNavigate } from "react-router-dom";
 import { GoogleMap, useJsApiLoader, Marker, InfoWindow, DirectionsRenderer, DirectionsService } from '@react-google-maps/api';
-
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
 // Google Maps API key - IMPORTANT: Replace with your actual API key
 const GOOGLE_MAPS_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || "YOUR_API_KEY_HERE";
 
