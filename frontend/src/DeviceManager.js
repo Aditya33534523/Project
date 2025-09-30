@@ -345,37 +345,9 @@ export default function DeviceManager({ onLogout }) {
               <option value="lost">🔴 Lost</option>
               <option value="found">🟢 Found</option>
             </select>
-            
-            <div className="coordinates-container">
-              <div className="coordinates-inputs">
-                <div className="coordinate-input-group">
-                  <label>Latitude</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={form.latitude}
-                    onChange={(e) => setForm({ ...form, latitude: e.target.value })}
-                    className="coordinate-input"
-                    placeholder="0.0000"
-                  />
-                </div>
-                <div className="coordinate-input-group">
-                  <label>Longitude</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={form.longitude}
-                    onChange={(e) => setForm({ ...form, longitude: e.target.value })}
-                    className="coordinate-input"
-                    placeholder="0.0000"
-                  />
-                </div>
-              </div>
-              <button type="button" className="location-button" onClick={useGPS}>
-                <span className="location-icon">📍</span> Use Current Location
-              </button>
-            </div>
-            
+            <button type="button" className="location-button" onClick={useGPS}>
+              <span className="location-icon">📍</span> Use Current Location
+            </button>            
             <button type="submit" disabled={loading}>
               {loading ? 'Adding...' : '✅ Add Device'}
             </button>
