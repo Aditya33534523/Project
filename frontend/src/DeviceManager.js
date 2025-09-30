@@ -1,38 +1,33 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import API from "./api";
 import { useNavigate } from "react-router-dom";
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import { GoogleMap, useJsApiLoader, Marker, InfoWindow, DirectionsRenderer, DirectionsService } from '@react-google-maps/api';
 
-// Fix for default markers
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-});
+// Google Maps API key
+const GOOGLE_MAPS_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"; // Replace with your actual API key
 
-// Custom icons for different statuses
-const lostIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
-  iconRetinaUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41]
-});
+// Map container styles
+const mapContainerStyle = {
+  width: '100%',
+  height: '400px',
+  marginTop: '20px',
+  borderRadius: '8px'
+};
 
-const foundIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
-  iconRetinaUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41]
-});
+// Default center position (can be adjusted)
+const center = {
+  lat: 40.7128,
+  lng: -74.0060
+};
+
+// Map options
+const mapOptions = {
+  disableDefaultUI: false,
+  zoomControl: true,
+  mapTypeControl: true,
+  streetViewControl: false,
+  fullscreenControl: true
+};
 
 export default function DeviceManager({ onLogout }) {
   const [devices, setDevices] = useState([]);
@@ -48,10 +43,20 @@ export default function DeviceManager({ onLogout }) {
   const [loading, setLoading] = useState(false);
   const [locationSuggestions, setLocationSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [trackingDevice, setTrackingDevice] = useState(null);
-  const [trackingRoute, setTrackingRoute] = useState([]);
-  const [isTracking, setIsTracking] = useState(false);
+  const [directions, setDirections] = useState(null);
+  const [selectedMarker, setSelectedMarker] = useState(null);
+  const [sourceLocation, setSourceLocation] = useState(null);
+  const [destinationLocation, setDestinationLocation] = useState(null);
   const navigate = useNavigate();
+  
+  // Load Google Maps API
+  const { isLoaded, loadError } = useJsApiLoader({
+    googleMapsApiKey: GOOGLE_MAPS_API_KEY,
+    libraries: ["places"]
+  });
 
   const fetchDevices = async () => {
     try {
@@ -66,22 +71,25 @@ export default function DeviceManager({ onLogout }) {
     fetchDevices();
   }, []);
 
-  // Location search using Nominatim (OpenStreetMap)
+  // Enhanced location search using Nominatim (OpenStreetMap)
   const searchLocation = async (query) => {
-    if (query.length < 3) {
+    if (query.length < 2) {
       setLocationSuggestions([]);
       return;
     }
 
     try {
+      setIsSearching(true);
       const response = await fetch(
         `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`
       );
       const data = await response.json();
       setLocationSuggestions(data);
       setShowSuggestions(true);
+      setIsSearching(false);
     } catch (error) {
       console.error('Error searching location:', error);
+      setIsSearching(false);
     }
   };
 
@@ -97,61 +105,56 @@ export default function DeviceManager({ onLogout }) {
   };
 
   // Start tracking a lost device
+  // Track device with Google Maps directions
   const startTracking = (device) => {
     if (device.status !== 'lost') {
       alert('Only lost devices can be tracked!');
       return;
     }
 
+    // Set the device as destination
     setTrackingDevice(device);
-    setTrackingRoute([]);
-    setIsTracking(true);
-
-    // Simulate tracking route (in real app, this would come from GPS tracking)
-    simulateTrackingRoute(device);
-  };
-
-  // Simulate GPS tracking route for lost device
-  const simulateTrackingRoute = (device) => {
-    if (!device.latitude || !device.longitude) {
-      alert('Device location not available for tracking');
-      return;
+    setDestinationLocation({
+      lat: parseFloat(device.latitude),
+      lng: parseFloat(device.longitude)
+    });
+    
+    // Use current location as source if available, otherwise use a default
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setSourceLocation({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          });
+        },
+        () => {
+          // If geolocation fails, use a default location
+          alert('Could not get your location. Using default source location.');
+          setSourceLocation(center); // Use the default center defined above
+        }
+      );
+    } else {
+      alert('Geolocation is not supported by your browser. Using default source location.');
+      setSourceLocation(center);
     }
-
-    const startLat = device.latitude;
-    const startLng = device.longitude;
-    const route = [[startLat, startLng]];
-
-    // Simulate movement pattern (in real app, this would be real GPS data)
-    let currentLat = startLat;
-    let currentLng = startLng;
-
-    const trackingInterval = setInterval(() => {
-      // Random walk simulation
-      currentLat += (Math.random() - 0.5) * 0.001;
-      currentLng += (Math.random() - 0.5) * 0.001;
-      
-      route.push([currentLat, currentLng]);
-      setTrackingRoute([...route]);
-
-      // Stop after 10 points (in real app, this would be continuous)
-      if (route.length >= 10) {
-        clearInterval(trackingInterval);
-        setIsTracking(false);
-      }
-    }, 2000);
-
-    // Store interval ID to clear it if needed
-    setTrackingDevice({...device, trackingInterval});
   };
 
+  // Handle directions result
+  const directionsCallback = useCallback((result) => {
+    if (result !== null && result.status === 'OK') {
+      setDirections(result);
+    } else {
+      console.error('Directions request failed:', result);
+    }
+  }, []);
+
+  // Stop tracking and clear directions
   const stopTracking = () => {
-    if (trackingDevice?.trackingInterval) {
-      clearInterval(trackingDevice.trackingInterval);
-    }
-    setIsTracking(false);
     setTrackingDevice(null);
-    setTrackingRoute([]);
+    setSourceLocation(null);
+    setDestinationLocation(null);
+    setDirections(null);
   };
 
   const handleSubmit = async (e) => {
@@ -272,6 +275,85 @@ export default function DeviceManager({ onLogout }) {
           <h1>📱 Lost & Found Tracker</h1>
           <p>Welcome, {localStorage.getItem('username')}</p>
         </div>
+      
+      {/* Google Maps Component */}
+      {isLoaded && (
+        <div className="map-container">
+          <GoogleMap
+            mapContainerStyle={mapContainerStyle}
+            center={center}
+            zoom={10}
+            options={mapOptions}
+          >
+            {/* Display markers for all devices */}
+            {devices.map((device) => (
+              <Marker
+                key={device.id}
+                position={{
+                  lat: parseFloat(device.latitude),
+                  lng: parseFloat(device.longitude)
+                }}
+                icon={{
+                  url: device.status === 'lost' 
+                    ? 'http://maps.google.com/mapfiles/ms/icons/red-dot.png'
+                    : 'http://maps.google.com/mapfiles/ms/icons/green-dot.png'
+                }}
+                onClick={() => setSelectedMarker(device)}
+              />
+            ))}
+
+            {/* Info window for selected marker */}
+            {selectedMarker && (
+              <InfoWindow
+                position={{
+                  lat: parseFloat(selectedMarker.latitude),
+                  lng: parseFloat(selectedMarker.longitude)
+                }}
+                onCloseClick={() => setSelectedMarker(null)}
+              >
+                <div className="info-window">
+                  <h3>{selectedMarker.name}</h3>
+                  <p>{selectedMarker.description}</p>
+                  <p>Status: {selectedMarker.status === 'lost' ? '❌ Lost' : '✅ Found'}</p>
+                  <p>Location: {selectedMarker.location}</p>
+                  {selectedMarker.status === 'lost' && (
+                    <button onClick={() => startTracking(selectedMarker)}>
+                      🔍 Track This Device
+                    </button>
+                  )}
+                </div>
+              </InfoWindow>
+            )}
+
+            {/* Directions renderer */}
+            {sourceLocation && destinationLocation && (
+              <DirectionsService
+                options={{
+                  destination: destinationLocation,
+                  origin: sourceLocation,
+                  travelMode: 'DRIVING'
+                }}
+                callback={directionsCallback}
+              />
+            )}
+            
+            {directions && (
+              <DirectionsRenderer
+                options={{
+                  directions: directions
+                }}
+              />
+            )}
+          </GoogleMap>
+          
+          {trackingDevice && (
+            <div className="tracking-controls">
+              <h3>Tracking: {trackingDevice.name}</h3>
+              <button onClick={stopTracking}>Stop Tracking</button>
+            </div>
+          )}
+        </div>
+      )}
         <div className="header-buttons">
           <button onClick={() => navigate('/dashboard')}>📊 Dashboard</button>
           <button onClick={handleLogout} className="logout-btn">🚪 Logout</button>
@@ -302,16 +384,28 @@ export default function DeviceManager({ onLogout }) {
               onChange={(e) => setForm({ ...form, category: e.target.value })}
             />
             
-            <div className="location-input-container">
-              <input
-                placeholder="Location (type to search...)"
-                value={form.location}
-                onChange={(e) => {
-                  setForm({ ...form, location: e.target.value });
-                  searchLocation(e.target.value);
-                }}
-                onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-              />
+            <div className="form-row location-search-container">
+              <div className="search-input-wrapper">
+                <input
+                  placeholder="Enter city or address"
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    searchLocation(e.target.value);
+                  }}
+                  className="location-search-input"
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                />
+                {isSearching && <div className="search-spinner"></div>}
+                <button 
+                  type="button" 
+                  className="search-button"
+                  onClick={() => searchLocation(searchQuery)}
+                >
+                  🔍
+                </button>
+              </div>
+              
               {showSuggestions && locationSuggestions.length > 0 && (
                 <div className="location-suggestions">
                   {locationSuggestions.map((suggestion, index) => (
@@ -320,11 +414,26 @@ export default function DeviceManager({ onLogout }) {
                       className="location-suggestion"
                       onClick={() => selectLocation(suggestion)}
                     >
-                      {suggestion.display_name}
+                      <div className="suggestion-name">{suggestion.display_name}</div>
+                      <div className="suggestion-coords">
+                        {suggestion.lat}, {suggestion.lon}
+                      </div>
                     </div>
                   ))}
                 </div>
               )}
+              
+              <input
+                placeholder="Selected Location"
+                value={form.location}
+                onChange={(e) => setForm({ ...form, location: e.target.value })}
+                className="selected-location-input"
+                readOnly
+              />
+              
+              <button type="button" className="location-button" onClick={useGPS}>
+                <span className="location-icon">📍</span> Use Current Location
+              </button>
             </div>
             
             <div className="form-row">
@@ -337,22 +446,31 @@ export default function DeviceManager({ onLogout }) {
               </select>
             </div>
             
-            <div className="form-row">
-              <input
-                placeholder="Latitude"
-                type="number"
-                step="any"
-                value={form.latitude}
-                onChange={(e) => setForm({ ...form, latitude: e.target.value })}
-              />
-              <input
-                placeholder="Longitude"
-                type="number"
-                step="any"
-                value={form.longitude}
-                onChange={(e) => setForm({ ...form, longitude: e.target.value })}
-              />
-              <button type="button" onClick={useGPS}>📍 Use GPS</button>
+            <div className="form-row coordinates-container">
+              <div className="coordinates-inputs">
+                <div className="coordinate-input-group">
+                  <label>Latitude</label>
+                  <input
+                    placeholder="Latitude"
+                    type="number"
+                    step="any"
+                    value={form.latitude}
+                    onChange={(e) => setForm({ ...form, latitude: e.target.value })}
+                    className="coordinate-input"
+                  />
+                </div>
+                <div className="coordinate-input-group">
+                  <label>Longitude</label>
+                  <input
+                    placeholder="Longitude"
+                    type="number"
+                    step="any"
+                    value={form.longitude}
+                    onChange={(e) => setForm({ ...form, longitude: e.target.value })}
+                    className="coordinate-input"
+                  />
+                </div>
+              </div>
             </div>
             
             <button type="submit" disabled={loading}>
