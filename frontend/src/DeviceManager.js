@@ -53,7 +53,7 @@ export default function DeviceManager({ onLogout }) {
   const navigate = useNavigate();
   
   // Load Google Maps API
-  const { isLoaded, loadError } = useJsApiLoader({
+  const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: GOOGLE_MAPS_API_KEY,
     libraries: ["places"]
   });
@@ -258,15 +258,7 @@ export default function DeviceManager({ onLogout }) {
     onLogout();
   };
 
-  // Calculate map center based on devices
-  const getMapCenter = () => {
-    const devicesWithLocation = devices.filter(d => d.latitude && d.longitude);
-    if (devicesWithLocation.length === 0) return [0, 0];
-    
-    const avgLat = devicesWithLocation.reduce((sum, d) => sum + d.latitude, 0) / devicesWithLocation.length;
-    const avgLng = devicesWithLocation.reduce((sum, d) => sum + d.longitude, 0) / devicesWithLocation.length;
-    return [avgLat, avgLng];
-  };
+  // Map center is now defined as a constant at the top of the file
 
   return (
     <div className="device-manager">
@@ -510,7 +502,7 @@ export default function DeviceManager({ onLogout }) {
                       <button
                         onClick={() => startTracking(device)}
                         className="track-btn"
-                        disabled={isTracking}
+                        disabled={trackingDevice !== null}
                       >
                         🔍 Track Device
                       </button>
@@ -534,111 +526,97 @@ export default function DeviceManager({ onLogout }) {
         <div className="tracking-panel">
           <div className="tracking-info">
             <h4>🔍 Tracking: {trackingDevice.name}</h4>
-            <p>Status: {isTracking ? '🔄 Active' : '⏸️ Stopped'}</p>
-            <p>Route Points: {trackingRoute.length}</p>
+            <p>Status: {directions ? '🔄 Active' : '⏸️ Stopped'}</p>
           </div>
           <div className="tracking-controls">
-            {isTracking ? (
-              <button onClick={stopTracking} className="stop-tracking-btn">
-                ⏹️ Stop Tracking
-              </button>
-            ) : (
-              <button onClick={() => simulateTrackingRoute(trackingDevice)} className="start-tracking-btn">
-                ▶️ Resume Tracking
-              </button>
-            )}
+            <button onClick={stopTracking} className="stop-tracking-btn">
+              ⏹️ Stop Tracking
+            </button>
           </div>
         </div>
       )}
 
-      {/* Enhanced Map with Tracking */}
-      {devices.some(d => d.latitude && d.longitude) && (
+      {/* Enhanced Map with Google Maps */}
+      {isLoaded && devices.some(d => d.latitude && d.longitude) && (
         <div className="map-section">
           <h3>🗺️ Device Locations & Tracking</h3>
           <div className="map-container">
-            <MapContainer 
-              center={getMapCenter()} 
-              zoom={trackingDevice ? 15 : 10} 
-              style={{ height: '500px', width: '100%' }}
+            <GoogleMap
+              mapContainerStyle={mapContainerStyle}
+              center={center}
+              zoom={trackingDevice ? 15 : 10}
+              options={mapOptions}
             >
-              <TileLayer
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                attribution='&copy; OpenStreetMap contributors'
-              />
-              
               {/* Device Markers */}
               {devices.map(device => (
                 device.latitude && device.longitude ? (
                   <Marker
                     key={device.id}
-                    position={[device.latitude, device.longitude]}
-                    icon={device.status === 'lost' ? lostIcon : foundIcon}
-                  >
-                    <Popup>
-                      <div>
-                        <strong>{device.name}</strong><br />
-                        Status: <span className={device.status}>{device.status.toUpperCase()}</span><br />
-                        {device.location && `Location: ${device.location}`}<br />
-                        {device.status === 'lost' && (
-                          <button
-                            onClick={() => startTracking(device)}
-                            style={{
-                              marginTop: '10px',
-                              padding: '5px 10px',
-                              background: '#667eea',
-                              color: 'white',
-                              border: 'none',
-                              borderRadius: '3px',
-                              cursor: 'pointer'
-                            }}
-                          >
-                            🔍 Start Tracking
-                          </button>
-                        )}
-                      </div>
-                    </Popup>
-                  </Marker>
+                    position={{
+                      lat: parseFloat(device.latitude),
+                      lng: parseFloat(device.longitude)
+                    }}
+                    onClick={() => setSelectedMarker(device)}
+                  />
                 ) : null
               ))}
 
-              {/* Tracking Route */}
-              {trackingRoute.length > 1 && (
-                <Polyline
-                  positions={trackingRoute}
-                  color="#ff4444"
-                  weight={3}
-                  opacity={0.8}
-                  dashArray="10, 5"
+              {/* Selected Marker Info Window */}
+              {selectedMarker && (
+                <InfoWindow
+                  position={{
+                    lat: parseFloat(selectedMarker.latitude),
+                    lng: parseFloat(selectedMarker.longitude)
+                  }}
+                  onCloseClick={() => setSelectedMarker(null)}
+                >
+                  <div>
+                    <strong>{selectedMarker.name}</strong><br />
+                    Status: <span className={selectedMarker.status}>{selectedMarker.status.toUpperCase()}</span><br />
+                    {selectedMarker.location && `Location: ${selectedMarker.location}`}<br />
+                    {selectedMarker.status === 'lost' && (
+                      <button
+                        onClick={() => startTracking(selectedMarker)}
+                        style={{
+                          marginTop: '10px',
+                          padding: '5px 10px',
+                          background: '#667eea',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '3px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        🔍 Start Tracking
+                      </button>
+                    )}
+                  </div>
+                </InfoWindow>
+              )}
+
+              {/* Directions */}
+              {sourceLocation && destinationLocation && (
+                <DirectionsService
+                  options={{
+                    destination: destinationLocation,
+                    origin: sourceLocation,
+                    travelMode: 'DRIVING'
+                  }}
+                  callback={directionsCallback}
                 />
               )}
 
-              {/* Current tracking position */}
-              {trackingRoute.length > 0 && (
-                <Marker
-                  position={trackingRoute[trackingRoute.length - 1]}
-                  icon={new L.Icon({
-                    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-orange.png',
-                    iconRetinaUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png',
-                    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-                    iconSize: [25, 41],
-                    iconAnchor: [12, 41],
-                    popupAnchor: [1, -34],
-                    shadowSize: [41, 41]
-                  })}
-                >
-                  <Popup>
-                    <div>
-                      <strong>📍 Current Position</strong><br />
-                      Device: {trackingDevice?.name}<br />
-                      Status: {isTracking ? 'Tracking Active' : 'Last Known Position'}
-                    </div>
-                  </Popup>
-                </Marker>
+              {directions && (
+                <DirectionsRenderer
+                  options={{
+                    directions: directions
+                  }}
+                />
               )}
-            </MapContainer>
-          </div>
-        </div>
-      )}
+             </GoogleMap>
+           </div>
+         </div>
+       )}
     </div>
   );
 }
